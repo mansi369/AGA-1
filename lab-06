@@ -1,0 +1,101 @@
+# prompt: Train a Deep Belief Network (DBN) using RBMs.
+# Fine-tune with supervised learning.
+# Evaluate performance on a benchmark dataset.
+
+import tensorflow as tf
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, UpSampling2D
+from tensorflow.keras.models import Model
+import numpy as np
+import matplotlib.pyplot as plt
+from tensorflow.keras.datasets import mnist
+from tensorflow import keras
+from tensorflow.keras import layers
+from sklearn.neural_network import BernoulliRBM
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn import datasets
+from sklearn.metrics import classification_report
+from sklearn.datasets import fetch_openml
+from scipy.ndimage import convolve
+from sklearn.preprocessing import minmax_scale
+from sklearn import linear_model
+from sklearn.base import clone
+from sklearn import metrics
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import binarize
+
+
+# Load and preprocess the dataset (e.g., MNIST)
+def load_data():
+    mnist = fetch_openml("mnist_784", version=1)
+    X = mnist.data / 255.0
+    y = mnist.target.astype(int)
+
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
+    pca = PCA(n_components=100)  # Reduce dimensionality using PCA
+    X = pca.fit_transform(X)
+    return X, y
+
+
+# Define the stacked RBM architecture
+def create_stacked_rbm(n_layers, n_units_per_layer):
+    rbms = []
+    for i in range(n_layers):
+        rbm = BernoulliRBM(n_components=n_units_per_layer, learning_rate=0.01, batch_size=10, n_iter=10, random_state=0)
+        rbms.append(rbm)
+    return rbms
+
+
+# Train the stacked RBM layer-wise
+def train_stacked_rbm(rbms, X_train):
+    X_transformed = X_train.copy()
+    for i, rbm in enumerate(rbms):
+        print(f"Training layer {i + 1}/{len(rbms)}...")
+        rbm.fit(X_transformed)
+        X_transformed = rbm.transform(X_transformed)
+    return rbms
+
+
+# Fine-tune with backpropagation (using logistic regression as an example)
+def fine_tune(rbms, X_train, y_train, X_test, y_test):
+    # Transform the training and testing data using the trained stacked RBM
+    X_train_transformed = X_train.copy()
+    for rbm in rbms:
+        X_train_transformed = rbm.transform(X_train_transformed)
+
+    X_test_transformed = X_test.copy()
+    for rbm in rbms:
+        X_test_transformed = rbm.transform(X_test_transformed)
+
+
+    # Train a classifier on the transformed data
+    classifier = LogisticRegression(max_iter=1000)
+    classifier.fit(X_train_transformed, y_train)
+
+    # Evaluate the classifier
+    y_pred = classifier.predict(X_test_transformed)
+    report = classification_report(y_test, y_pred)
+    print("Classification report after fine-tuning:\n", report)
+
+    return classifier
+
+# Main execution
+if __name__ == "__main__":
+    # Load data
+    X, y = load_data()
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
+
+    # Create stacked RBM
+    n_layers = 2
+    n_units_per_layer = 100  # Adjust this for better performance
+    rbms = create_stacked_rbm(n_layers, n_units_per_layer)
+
+    # Train stacked RBM
+    rbms = train_stacked_rbm(rbms, X_train)
+
+    # Fine-tune with backpropagation (Logistic Regression)
+    classifier_stacked_rbm = fine_tune(rbms, X_train, y_train, X_test, y_test)
