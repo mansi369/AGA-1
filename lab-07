@@ -1,0 +1,56 @@
+# prompt: Train a DBM for real-valued data representation.
+# Use any dataset & Evaluate the quality of learned representations.
+
+import numpy as np
+from sklearn.neural_network import BernoulliRBM
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from sklearn.datasets import fetch_openml
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+
+# Load the MNIST dataset
+mnist = fetch_openml('mnist_784')
+X = mnist.data / 255.0  # Normalize pixel values
+y = mnist.target.astype(int)
+
+# Preprocess the data
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+
+pca = PCA(n_components=100)  # Reduce dimensionality using PCA
+X = pca.fit_transform(X)
+
+# Split data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
+
+
+# Create and train a stacked RBM
+n_layers = 2
+n_units_per_layer = 100
+rbms = []
+for _ in range(n_layers):
+    rbm = BernoulliRBM(n_components=n_units_per_layer, learning_rate=0.01, batch_size=10, n_iter=10, random_state=0)
+    rbms.append(rbm)
+
+X_transformed = X_train.copy()
+for i, rbm in enumerate(rbms):
+    print(f"Training layer {i + 1}/{len(rbms)}...")
+    rbm.fit(X_transformed)
+    X_transformed = rbm.transform(X_transformed)
+
+# Fine-tune with a classifier (Logistic Regression)
+classifier = LogisticRegression(max_iter=1000)
+X_train_transformed = X_train.copy()
+for rbm in rbms:
+    X_train_transformed = rbm.transform(X_train_transformed)
+classifier.fit(X_train_transformed, y_train)
+
+# Evaluate the model
+X_test_transformed = X_test.copy()
+for rbm in rbms:
+    X_test_transformed = rbm.transform(X_test_transformed)
+y_pred = classifier.predict(X_test_transformed)
+print(classification_report(y_test, y_pred))
