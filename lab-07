@@ -1,56 +1,63 @@
-# prompt: Train a DBM for real-valued data representation.
-# Use any dataset & Evaluate the quality of learned representations.
-
 import numpy as np
-from sklearn.neural_network import BernoulliRBM
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
+import tensorflow as tf
+from sklearn.datasets import fetch_california_housing
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
-from sklearn.datasets import fetch_openml
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+from tensorflow.keras import layers, models
+import matplotlib.pyplot as plt
 
-# Load the MNIST dataset
-mnist = fetch_openml('mnist_784')
-X = mnist.data / 255.0  # Normalize pixel values
-y = mnist.target.astype(int)
+data = fetch_california_housing()
+X = data.data
+y = data.target
 
-# Preprocess the data
+
 scaler = StandardScaler()
-X = scaler.fit_transform(X)
+X_scaled = scaler.fit_transform(X)
 
-pca = PCA(n_components=100)  # Reduce dimensionality using PCA
-X = pca.fit_transform(X)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-# Split data into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
+class DBM:
+    def __init__(self, layer_sizes):
+        self.layer_sizes = layer_sizes
+        self.model = self.build_model()
 
+    def build_model(self):
+        model = models.Sequential()
 
-# Create and train a stacked RBM
-n_layers = 2
-n_units_per_layer = 100
-rbms = []
-for _ in range(n_layers):
-    rbm = BernoulliRBM(n_components=n_units_per_layer, learning_rate=0.01, batch_size=10, n_iter=10, random_state=0)
-    rbms.append(rbm)
+        # Add the first hidden layer
+        model.add(layers.InputLayer(input_shape=(X_train.shape[1],)))
+        model.add(layers.Dense(self.layer_sizes[0], activation='relu'))
 
-X_transformed = X_train.copy()
-for i, rbm in enumerate(rbms):
-    print(f"Training layer {i + 1}/{len(rbms)}...")
-    rbm.fit(X_transformed)
-    X_transformed = rbm.transform(X_transformed)
+        for size in self.layer_sizes[1:]:
+            model.add(layers.Dense(size, activation='relu'))
 
-# Fine-tune with a classifier (Logistic Regression)
-classifier = LogisticRegression(max_iter=1000)
-X_train_transformed = X_train.copy()
-for rbm in rbms:
-    X_train_transformed = rbm.transform(X_train_transformed)
-classifier.fit(X_train_transformed, y_train)
+        model.add(layers.Dense(1))
 
-# Evaluate the model
-X_test_transformed = X_test.copy()
-for rbm in rbms:
-    X_test_transformed = rbm.transform(X_test_transformed)
-y_pred = classifier.predict(X_test_transformed)
-print(classification_report(y_test, y_pred))
+        model.compile(optimizer='adam', loss='mean_squared_error')
+
+        return model
+
+    def train(self, X_train, y_train, epochs=50, batch_size=32):
+        self.model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=1)
+
+    def evaluate(self, X_test, y_test):
+        loss = self.model.evaluate(X_test, y_test)
+        return loss
+
+    def predict(self, X):
+        return self.model.predict(X)
+
+dbm = DBM(layer_sizes=[256, 128, 64])
+
+dbm.train(X_train, y_train, epochs=50, batch_size=32)
+
+test_loss = dbm.evaluate(X_test, y_test)
+print(f"Test Loss (MSE): {test_loss}")
+
+y_pred = dbm.predict(X_test)
+
+plt.scatter(y_test, y_pred, alpha=0.5)
+plt.xlabel('True Values')
+plt.ylabel('Predicted Values')
+plt.title('True vs Predicted Housing Prices')
+plt.show()
