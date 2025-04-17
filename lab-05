@@ -1,100 +1,107 @@
-# prompt: Implement a deep learning model using stacked RBMs.
-# Train layer-wise and fine-tune using backpropagation.
-# Compare performance with traditional deep networks.
-
+#Stacks using RBM
 import numpy as np
-from sklearn.neural_network import BernoulliRBM
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
-from sklearn.datasets import fetch_openml
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+from sklearn.preprocessing import binarize
 
+class Stack:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.stack = []
 
-# Step 1: Load and preprocess the dataset (e.g., MNIST)
-def load_data():
-    mnist = fetch_openml("mnist_784", version=1)
-    X = mnist.data / 255.0
-    y = mnist.target.astype(int)
+    def push(self, item):
+        if len(self.stack) < self.capacity:
+            self.stack.append(item)
+            return True
+        return False
 
-    scaler = StandardScaler()
-    X = scaler.fit_transform(X)
+    def pop(self):
+        if not self.is_empty():
+            return self.stack.pop()
+        return None
 
-    pca = PCA(n_components=100)  # Reduce dimensionality using PCA
-    X = pca.fit_transform(X)
-    return X, y
+    def is_empty(self):
+        return len(self.stack) == 0
 
+class RBM:
+    def __init__(self, n_visible, n_hidden, learning_rate=0.1):
+        self.n_visible = n_visible
+        self.n_hidden = n_hidden
+        self.lr = learning_rate
 
-# Step 2: Define the stacked RBM architecture
-def create_stacked_rbm(n_layers, n_units_per_layer):
-    rbms = []
-    for i in range(n_layers):
-        rbm = BernoulliRBM(n_components=n_units_per_layer, learning_rate=0.01, batch_size=10, n_iter=10, random_state=0)
-        rbms.append(rbm)
-    return rbms
+        self.weights = np.random.normal(0, 0.1, (n_visible, n_hidden))
+        self.v_bias = np.zeros(n_visible)
+        self.h_bias = np.zeros(n_hidden)
 
+    def sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
 
-# Step 3: Train the stacked RBM layer-wise
-def train_stacked_rbm(rbms, X_train):
-    X_transformed = X_train.copy()
-    for i, rbm in enumerate(rbms):
-        print(f"Training layer {i + 1}/{len(rbms)}...")
-        rbm.fit(X_transformed)
-        X_transformed = rbm.transform(X_transformed)
-    return rbms
+    def sample_hidden(self, visible):
+        if visible.ndim == 1:
+            visible = visible.reshape(1, -1)
+        activation = np.dot(visible, self.weights) + self.h_bias
+        prob_h = self.sigmoid(activation)
+        sampled_h = binarize(prob_h, threshold=0.5)
+        return prob_h, sampled_h
 
+    def sample_visible(self, hidden):
+        if hidden.ndim == 1:
+            hidden = hidden.reshape(1, -1)
+        activation = np.dot(hidden, self.weights.T) + self.v_bias
+        prob_v = self.sigmoid(activation)
+        sampled_v = binarize(prob_v, threshold=0.5)
+        return prob_v, sampled_v
 
-# Step 4: Fine-tune with backpropagation (using logistic regression as an example)
-def fine_tune(rbms, X_train, y_train, X_test, y_test):
-    # Transform the training and testing data using the trained stacked RBM
-    X_train_transformed = X_train.copy()
-    for rbm in rbms:
-        X_train_transformed = rbm.transform(X_train_transformed)
+    def train(self, data, epochs=100, batch_size=10):
+        n_samples = data.shape[0]
 
-    X_test_transformed = X_test.copy()
-    for rbm in rbms:
-        X_test_transformed = rbm.transform(X_test_transformed)
+        for epoch in range(epochs):
+            idx = np.random.permutation(n_samples)
+            data_shuffled = data[idx]
 
+            for i in range(0, n_samples, batch_size):
+                batch = data_shuffled[i:i+batch_size]
 
-    # Train a classifier on the transformed data
-    classifier = LogisticRegression(max_iter=1000)
-    classifier.fit(X_train_transformed, y_train)
+                pos_hidden_probs, pos_hidden = self.sample_hidden(batch)
+                pos_associations = np.dot(batch.T, pos_hidden_probs)
 
-    # Evaluate the classifier
-    y_pred = classifier.predict(X_test_transformed)
-    report = classification_report(y_test, y_pred)
-    print("Classification report after fine-tuning:\n", report)
+                neg_visible_probs, neg_visible = self.sample_visible(pos_hidden)
+                neg_hidden_probs, neg_hidden = self.sample_hidden(neg_visible)
+                neg_associations = np.dot(neg_visible.T, neg_hidden_probs)
 
-    return classifier
+                self.weights += self.lr * (pos_associations - neg_associations) / batch_size
+                self.v_bias += self.lr * np.mean(batch - neg_visible, axis=0)
+                self.h_bias += self.lr * np.mean(pos_hidden_probs - neg_hidden_probs, axis=0)
 
-#Step 5: Train a traditional deep network for comparison
+class StackRBM:
+    def __init__(self, capacity, n_visible, n_hidden):
+        self.stack = Stack(capacity)
+        self.rbm = RBM(n_visible, n_hidden)
 
-def train_deep_network(X_train, y_train, X_test, y_test):
-    classifier = LogisticRegression(max_iter=1000)
-    classifier.fit(X_train, y_train)
-    y_pred = classifier.predict(X_test)
-    report = classification_report(y_test, y_pred)
-    print("Classification report of traditional deep network:\n", report)
-    return classifier
+    def push_and_train(self, data):
+        if self.stack.push(data):
+            data_array = np.array(data).reshape(1, -1)
+            self.rbm.train(data_array)
+            return True
+        return False
 
+    def pop_and_reconstruct(self):
+        data = self.stack.pop()
+        if data is not None:
+            data_array = np.array(data).reshape(1, -1)
+            hidden_probs, hidden = self.rbm.sample_hidden(data_array)
+            visible_probs, reconstructed = self.rbm.sample_visible(hidden)
+            return reconstructed[0]
+        return None
 
+    def get_stack_size(self):
+        return len(self.stack.stack)
 
 if __name__ == "__main__":
-    # Load data
-    X, y = load_data()
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
-
-    # Create stacked RBM
-    n_layers = 2
-    n_units_per_layer = 100  # Adjust this for better performance
-    rbms = create_stacked_rbm(n_layers, n_units_per_layer)
-
-    # Train stacked RBM
-    rbms = train_stacked_rbm(rbms, X_train)
-
-    # Fine-tune with backpropagation (Logistic Regression)
-    classifier_stacked_rbm = fine_tune(rbms, X_train, y_train, X_test, y_test)
-
-    classifier_deep_network = train_deep_network(X_train, y_train, X_test, y_test)
+    stack_rbm = StackRBM(capacity=5, n_visible=4, n_hidden=2)
+    sample_data = [[1, 0, 1, 0], [0, 1, 0, 1], [1, 1, 0, 0], [0, 0, 1, 1]]
+    for data in sample_data:
+        success = stack_rbm.push_and_train(data)
+        print(f"Pushed data {data}: {success}")
+    reconstructed = stack_rbm.pop_and_reconstruct()
+    if reconstructed is not None:
+        print(f"Reconstructed data: {reconstructed}")
+    print(f"Current stack size: {stack_rbm.get_stack_size()}")
